@@ -59,4 +59,4 @@ logguardian:
     maxFingerprints: ${LOGGUARDIAN_AI_MAX_FINGERPRINTS:5}
     maxSamplesPerFingerprint: ${LOGGUARDIAN_AI_MAX_SAMPLES_PER_FP:3}
 docker:
-  host: unix:///var/run/docker.sock
+  host: unix:///home/franek/.docker/desktop/docker.sock

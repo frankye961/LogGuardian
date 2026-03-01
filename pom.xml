@@ -146,6 +146,11 @@
             <version>2.0.17</version>
             <scope>compile</scope>
         </dependency>
+        <dependency>
+            <groupId>com.github.docker-java</groupId>
+            <artifactId>docker-java-transport-okhttp</artifactId>
+            <version>3.3.6</version>
+        </dependency>
     </dependencies>
 
     <build>
