@@ -121,7 +121,7 @@ public class DockerContainerService {
     }
 
     /**
-     * retrieves
+     * retrieves all the running containers
      *
      * @return
      */
