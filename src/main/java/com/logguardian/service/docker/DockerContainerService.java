@@ -1,10 +1,15 @@
-package com.logguardian.service;
+package com.logguardian.service.docker;
 
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
+import com.logguardian.model.LogEntry;
 import com.logguardian.model.LogLine;
+import com.logguardian.aggregator.MultilineAggregator;
+import com.logguardian.parser.json.JsonParser;
+import com.logguardian.parser.model.LogEvent;
+import com.logguardian.parser.string.StringParser;
 import com.logguardian.rest.model.ContainerRulesetRequest;
 import com.logguardian.rest.model.RuleEnum;
 import lombok.AllArgsConstructor;
@@ -16,7 +21,8 @@ import reactor.core.publisher.Flux;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static com.logguardian.parser.mapper.LogLineMapper.map;
+import static com.logguardian.mapper.LogLineMapper.map;
+import static com.logguardian.util.Utils.checkIfJson;
 import static org.apache.hc.core5.io.Closer.closeQuietly;
 
 @Slf4j
@@ -26,6 +32,9 @@ public class DockerContainerService {
 
     private final DockerClient client;
     private final ConcurrentHashMap<String, Disposable> activeContainers = new ConcurrentHashMap<>();
+    private final MultilineAggregator aggregator;
+    private final StringParser stringParser;
+    private final JsonParser jsonParser;
 
     public List<Container> getRunningContainerList() {
         try {
@@ -77,6 +86,10 @@ public class DockerContainerService {
 
     private Disposable startStream(String containerId) {
         return streamLogs(containerId)
+                .groupBy(LogLine::containerId)
+                .flatMap(record -> record.
+                        transform(aggregator::transform)
+                        .map(this::chooseParser))
                 .doOnError(e -> log.error(e.getMessage()))
                 .doOnNext(logLine -> log.info(String.valueOf(logLine)))
                 .doFinally(sig -> activeContainers.remove(containerId))
@@ -87,6 +100,14 @@ public class DockerContainerService {
         for (Container container : getRunningContainerList()) {
             activeContainers.computeIfAbsent(container.getId(), this::startStream);
         }
+    }
+
+    private LogEvent chooseParser(LogEntry entry){
+        String msg = entry.message();
+        if(checkIfJson(msg)){
+            return jsonParser.parse(entry);
+        }
+        return stringParser.parse(entry);
     }
 
     /**
