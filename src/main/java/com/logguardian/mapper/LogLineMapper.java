@@ -1,4 +1,4 @@
-package com.logguardian.parser.mapper;
+package com.logguardian.mapper;
 
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.StreamType;
