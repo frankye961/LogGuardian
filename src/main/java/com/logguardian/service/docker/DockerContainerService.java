@@ -4,6 +4,10 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
+import com.logguardian.fingerprint.anomaly.AnomalyDetector;
+import com.logguardian.fingerprint.generator.FingerPrintGenerator;
+import com.logguardian.fingerprint.window.CountedLogEvent;
+import com.logguardian.fingerprint.window.FingerPrintWindowCounter;
 import com.logguardian.model.LogEntry;
 import com.logguardian.model.LogLine;
 import com.logguardian.aggregator.MultilineAggregator;
@@ -36,6 +40,9 @@ public class DockerContainerService {
     private final MultilineAggregator aggregator;
     private final StringParser stringParser;
     private final JsonParser jsonParser;
+    private final FingerPrintGenerator fingerPrintGenerator;
+    private final FingerPrintWindowCounter counter;
+    private final AnomalyDetector detector;
 
     public List<Container> getRunningContainerList() {
         try {
@@ -59,18 +66,18 @@ public class DockerContainerService {
 
     public void stopTrailing(ContainerRulesetRequest request) {
         var disposable = activeContainers.remove(request.getContainerId());
-        if(disposable != null){
+        if (disposable != null) {
             disposable.dispose();
         }
-        if(request.getRule().equals(RuleEnum.ALL)){
+        if (request.getRule().equals(RuleEnum.ALL)) {
             stopAllTrailing();
         }
     }
 
-    private void stopAllTrailing(){
-        for (Container container : getRunningContainerList()){
+    private void stopAllTrailing() {
+        for (Container container : getRunningContainerList()) {
             var disposable = activeContainers.remove(container.getId());
-            if(disposable != null){
+            if (disposable != null) {
                 disposable.dispose();
             }
         }
@@ -90,10 +97,17 @@ public class DockerContainerService {
                 .flatMap(record -> record.
                         transform(aggregator::transform)
                         .flatMap(entry -> Mono.fromCallable(() -> chooseParser(entry))
-                        .onErrorResume(ex -> {
-                            log.warn("Error in parsing entry {}", ex.getMessage());
-                            return Mono.just(stringParser.parse(entry));
-                        })))
+                                .onErrorResume(ex -> {
+                                    log.warn("Error in parsing entry {}", ex.getMessage());
+                                    return Mono.just(stringParser.parse(entry));
+                                })
+                                .map(fingerPrintGenerator::generateFingerprint)
+                                .map(event -> {
+                                    int count = counter.countFingerprint(event);
+                                    return new CountedLogEvent(event, count);
+                                })
+                                .flatMap(counted -> Mono.justOrEmpty(detector.detectAnomaly(counted)))
+                                .doOnNext(anomaly -> log.warn("ANOMALY DETECTED: {}", anomaly))))
                 .doOnError(e -> log.error(e.getMessage()))
                 .doOnNext(logLine -> log.info(String.valueOf(logLine)))
                 .doFinally(sig -> activeContainers.remove(containerId))
@@ -106,9 +120,9 @@ public class DockerContainerService {
         }
     }
 
-    private LogEvent chooseParser(LogEntry entry){
+    private LogEvent chooseParser(LogEntry entry) {
         String msg = entry.message();
-        if(checkIfJson(msg)){
+        if (checkIfJson(msg)) {
             return jsonParser.parse(entry);
         }
         return stringParser.parse(entry);
