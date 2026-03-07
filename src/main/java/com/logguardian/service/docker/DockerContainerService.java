@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -54,7 +55,6 @@ public class DockerContainerService {
         if (request.getRule().equals(RuleEnum.ALL)) {
             tailAllActiveContainers();
         }
-
     }
 
     public void stopTrailing(ContainerRulesetRequest request) {
@@ -89,7 +89,11 @@ public class DockerContainerService {
                 .groupBy(LogLine::containerId)
                 .flatMap(record -> record.
                         transform(aggregator::transform)
-                        .map(this::chooseParser))
+                        .flatMap(entry -> Mono.fromCallable(() -> chooseParser(entry))
+                        .onErrorResume(ex -> {
+                            log.warn("Error in parsing entry {}", ex.getMessage());
+                            return Mono.just(stringParser.parse(entry));
+                        })))
                 .doOnError(e -> log.error(e.getMessage()))
                 .doOnNext(logLine -> log.info(String.valueOf(logLine)))
                 .doFinally(sig -> activeContainers.remove(containerId))
