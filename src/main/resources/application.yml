@@ -4,9 +4,20 @@ server:
 spring:
   application:
     name: logguardian
+
   data:
     mongodb:
       uri: ${MONGODB_URI:mongodb://localhost:27017/logguardian}
+
+  ai:
+    model:
+      chat: openai
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: gpt-5.4
+          temperature: 0.2
 
 management:
   endpoints:
@@ -52,11 +63,12 @@ logguardian:
 
   ai:
     enabled: ${LOGGUARDIAN_AI_ENABLED:false}
-    provider: ${LOGGUARDIAN_AI_PROVIDER:openai}     # openai|claude
-    model: ${LOGGUARDIAN_AI_MODEL:gpt-4o-mini}
-    apiKey: ${LOGGUARDIAN_AI_API_KEY:}
+    provider: ${LOGGUARDIAN_AI_PROVIDER:openai}
+    model: ${LOGGUARDIAN_AI_MODEL:gpt-5.4}
+    apiKey: ${LOGGUARDIAN_AI_API_KEY:${OPENAI_API_KEY:}}
     monitorIntervalSeconds: ${LOGGUARDIAN_AI_MONITOR_INTERVAL_SECONDS:60}
     maxFingerprints: ${LOGGUARDIAN_AI_MAX_FINGERPRINTS:5}
     maxSamplesPerFingerprint: ${LOGGUARDIAN_AI_MAX_SAMPLES_PER_FP:3}
+
 docker:
   host: unix:///home/franek/.docker/desktop/docker.sock
