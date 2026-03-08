@@ -1,4 +1,4 @@
-# LogGuardian
+# LogGuardian - V1.0.0 ALFA
 
 LogGuardian is a Spring Boot/WebFlux service that tails Docker container logs in real time, groups multiline stack traces, parses events (JSON or plaintext), computes normalized fingerprints, detects error spikes, and produces AI-assisted incident summaries.
 
