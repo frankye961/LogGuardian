@@ -13,11 +13,10 @@ spring:
     model:
       chat: openai
     openai:
-      api-key: ${OPENAI_API_KEY}
+      api-key: ${OPENAPI_KEY}
       chat:
         options:
-          model: gpt-5.4
-          temperature: 0.2
+          model: gpt-5-mini
 
 management:
   endpoints:
@@ -62,13 +61,13 @@ logguardian:
     noveltyLookbackHours: ${LOGGUARDIAN_NOVELTY_LOOKBACK_HOURS:24}
 
   ai:
-    enabled: ${LOGGUARDIAN_AI_ENABLED:false}
+    enabled: ${LOGGUARDIAN_AI_ENABLED:true}
     provider: ${LOGGUARDIAN_AI_PROVIDER:openai}
-    model: ${LOGGUARDIAN_AI_MODEL:gpt-5.4}
-    apiKey: ${LOGGUARDIAN_AI_API_KEY:${OPENAI_API_KEY:}}
+    model: ${LOGGUARDIAN_AI_MODEL:gpt-5-mini}
+    apiKey: ${LOGGUARDIAN_AI_API_KEY:${OPEAPI_KEY}}
     monitorIntervalSeconds: ${LOGGUARDIAN_AI_MONITOR_INTERVAL_SECONDS:60}
     maxFingerprints: ${LOGGUARDIAN_AI_MAX_FINGERPRINTS:5}
     maxSamplesPerFingerprint: ${LOGGUARDIAN_AI_MAX_SAMPLES_PER_FP:3}
 
 docker:
-  host: unix:///home/franek/.docker/desktop/docker.sock
+  host: ${DOCKER_HOST}

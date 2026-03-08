@@ -4,10 +4,12 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
+import com.logguardian.ai.AiIncidentSummarizer;
 import com.logguardian.fingerprint.anomaly.AnomalyDetector;
 import com.logguardian.fingerprint.generator.FingerPrintGenerator;
 import com.logguardian.fingerprint.window.CountedLogEvent;
 import com.logguardian.fingerprint.window.FingerPrintWindowCounter;
+import com.logguardian.mapper.AiSummerizeMapper;
 import com.logguardian.model.LogEntry;
 import com.logguardian.model.LogLine;
 import com.logguardian.aggregator.MultilineAggregator;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import static com.logguardian.mapper.LogLineMapper.map;
 import static com.logguardian.util.Utils.checkIfJson;
 import static org.apache.hc.core5.io.Closer.closeQuietly;
+import static com.logguardian.mapper.AiSummerizeMapper.toIncidentSummaryRequest;
 
 @Slf4j
 @Service
@@ -43,6 +47,7 @@ public class DockerContainerService {
     private final FingerPrintGenerator fingerPrintGenerator;
     private final FingerPrintWindowCounter counter;
     private final AnomalyDetector detector;
+    private final AiIncidentSummarizer summarizer;
 
     public List<Container> getRunningContainerList() {
         try {
@@ -93,26 +98,27 @@ public class DockerContainerService {
 
     private Disposable startStream(String containerId) {
         return streamLogs(containerId)
-                .groupBy(LogLine::containerId)
-                .flatMap(record -> record.
-                        transform(aggregator::transform)
-                        .flatMap(entry -> Mono.fromCallable(() -> chooseParser(entry))
-                                .onErrorResume(ex -> {
-                                    log.warn("Error in parsing entry {}", ex.getMessage());
-                                    return Mono.just(stringParser.parse(entry));
-                                })
+                .transform(aggregator::transform)
+                .flatMap(entry ->
+                        Mono.fromCallable(() -> chooseParser(entry))
                                 .map(fingerPrintGenerator::generateFingerprint)
                                 .map(event -> {
                                     int count = counter.countFingerprint(event);
                                     return new CountedLogEvent(event, count);
                                 })
                                 .flatMap(counted -> Mono.justOrEmpty(detector.detectAnomaly(counted)))
-                                .doOnNext(anomaly -> log.warn("ANOMALY DETECTED: {}", anomaly))))
-                .doOnError(e -> log.error(e.getMessage()))
-                .doOnNext(logLine -> log.info(String.valueOf(logLine)))
+                                .map(AiSummerizeMapper::toIncidentSummaryRequest)
+                                .flatMap(req ->
+                                        Mono.fromCallable(() -> summarizer.summarize(req))
+                                                .subscribeOn(Schedulers.boundedElastic())
+                                )
+                )
+                .doOnNext(summary -> log.warn("AI INCIDENT SUMMARY: {}", summary))
+                .doOnError(e -> log.error("Stream failed for container {}", containerId, e))
                 .doFinally(sig -> activeContainers.remove(containerId))
                 .subscribe();
     }
+
 
     private void tailAllActiveContainers() {
         for (Container container : getRunningContainerList()) {
