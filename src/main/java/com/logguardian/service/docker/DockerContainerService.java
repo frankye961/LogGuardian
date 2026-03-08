@@ -9,7 +9,7 @@ import com.logguardian.fingerprint.anomaly.AnomalyDetector;
 import com.logguardian.fingerprint.generator.FingerPrintGenerator;
 import com.logguardian.fingerprint.window.CountedLogEvent;
 import com.logguardian.fingerprint.window.FingerPrintWindowCounter;
-import com.logguardian.mapper.AiSummerizeMapper;
+import com.logguardian.mapper.AiSummerizerMapper;
 import com.logguardian.model.LogEntry;
 import com.logguardian.model.LogLine;
 import com.logguardian.aggregator.MultilineAggregator;
@@ -32,7 +32,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import static com.logguardian.mapper.LogLineMapper.map;
 import static com.logguardian.util.Utils.checkIfJson;
 import static org.apache.hc.core5.io.Closer.closeQuietly;
-import static com.logguardian.mapper.AiSummerizeMapper.toIncidentSummaryRequest;
 
 @Slf4j
 @Service
@@ -107,7 +106,7 @@ public class DockerContainerService {
                                     return new CountedLogEvent(event, count);
                                 })
                                 .flatMap(counted -> Mono.justOrEmpty(detector.detectAnomaly(counted)))
-                                .map(AiSummerizeMapper::toIncidentSummaryRequest)
+                                .map(AiSummerizerMapper::toIncidentSummaryRequest)
                                 .flatMap(req ->
                                         Mono.fromCallable(() -> summarizer.summarize(req))
                                                 .subscribeOn(Schedulers.boundedElastic())
