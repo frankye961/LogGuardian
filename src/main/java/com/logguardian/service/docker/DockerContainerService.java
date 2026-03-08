@@ -4,6 +4,12 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
+import com.logguardian.ai.AiIncidentSummarizer;
+import com.logguardian.fingerprint.anomaly.AnomalyDetector;
+import com.logguardian.fingerprint.generator.FingerPrintGenerator;
+import com.logguardian.fingerprint.window.CountedLogEvent;
+import com.logguardian.fingerprint.window.FingerPrintWindowCounter;
+import com.logguardian.mapper.AiSummerizerMapper;
 import com.logguardian.model.LogEntry;
 import com.logguardian.model.LogLine;
 import com.logguardian.aggregator.MultilineAggregator;
@@ -17,6 +23,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,6 +43,10 @@ public class DockerContainerService {
     private final MultilineAggregator aggregator;
     private final StringParser stringParser;
     private final JsonParser jsonParser;
+    private final FingerPrintGenerator fingerPrintGenerator;
+    private final FingerPrintWindowCounter counter;
+    private final AnomalyDetector detector;
+    private final AiIncidentSummarizer summarizer;
 
     public List<Container> getRunningContainerList() {
         try {
@@ -54,23 +66,22 @@ public class DockerContainerService {
         if (request.getRule().equals(RuleEnum.ALL)) {
             tailAllActiveContainers();
         }
-
     }
 
     public void stopTrailing(ContainerRulesetRequest request) {
         var disposable = activeContainers.remove(request.getContainerId());
-        if(disposable != null){
+        if (disposable != null) {
             disposable.dispose();
         }
-        if(request.getRule().equals(RuleEnum.ALL)){
+        if (request.getRule().equals(RuleEnum.ALL)) {
             stopAllTrailing();
         }
     }
 
-    private void stopAllTrailing(){
-        for (Container container : getRunningContainerList()){
+    private void stopAllTrailing() {
+        for (Container container : getRunningContainerList()) {
             var disposable = activeContainers.remove(container.getId());
-            if(disposable != null){
+            if (disposable != null) {
                 disposable.dispose();
             }
         }
@@ -86,15 +97,27 @@ public class DockerContainerService {
 
     private Disposable startStream(String containerId) {
         return streamLogs(containerId)
-                .groupBy(LogLine::containerId)
-                .flatMap(record -> record.
-                        transform(aggregator::transform)
-                        .map(this::chooseParser))
-                .doOnError(e -> log.error(e.getMessage()))
-                .doOnNext(logLine -> log.info(String.valueOf(logLine)))
+                .transform(aggregator::transform)
+                .flatMap(entry ->
+                        Mono.fromCallable(() -> chooseParser(entry))
+                                .map(fingerPrintGenerator::generateFingerprint)
+                                .map(event -> {
+                                    int count = counter.countFingerprint(event);
+                                    return new CountedLogEvent(event, count);
+                                })
+                                .flatMap(counted -> Mono.justOrEmpty(detector.detectAnomaly(counted)))
+                                .map(AiSummerizerMapper::toIncidentSummaryRequest)
+                                .flatMap(req ->
+                                        Mono.fromCallable(() -> summarizer.summarize(req))
+                                                .subscribeOn(Schedulers.boundedElastic())
+                                )
+                )
+                .doOnNext(summary -> log.warn("AI INCIDENT SUMMARY: {}", summary))
+                .doOnError(e -> log.error("Stream failed for container {}", containerId, e))
                 .doFinally(sig -> activeContainers.remove(containerId))
                 .subscribe();
     }
+
 
     private void tailAllActiveContainers() {
         for (Container container : getRunningContainerList()) {
@@ -102,9 +125,9 @@ public class DockerContainerService {
         }
     }
 
-    private LogEvent chooseParser(LogEntry entry){
+    private LogEvent chooseParser(LogEntry entry) {
         String msg = entry.message();
-        if(checkIfJson(msg)){
+        if (checkIfJson(msg)) {
             return jsonParser.parse(entry);
         }
         return stringParser.parse(entry);
