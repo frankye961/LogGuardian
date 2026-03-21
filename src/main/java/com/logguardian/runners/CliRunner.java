@@ -5,6 +5,7 @@ import com.logguardian.rest.model.ContainerRulesetRequest;
 import com.logguardian.rest.model.RuleEnum;
 import com.logguardian.service.docker.DockerContainerService;
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -12,6 +13,8 @@ import org.springframework.stereotype.Component;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Scanner;
+
+import static com.logguardian.runners.Command.*;
 
 @Component
 @RequiredArgsConstructor
@@ -31,15 +34,15 @@ public class CliRunner implements CommandLineRunner {
         String command = args[0].trim().toLowerCase();
 
         switch (command) {
-            case "list" -> {
+            case LIST -> {
                 listContainers();
                 exit(0);
             }
-            case "tail-all" -> {
+            case TAIL_ALL-> {
                 tailAllContainers();
                 exit(0);
             }
-            case "tail-one" -> {
+            case TAIL_ONE -> {
                 if (args.length < 2) {
                     System.err.println("Missing container id for tail-one command.");
                     printHelp();
@@ -49,11 +52,11 @@ public class CliRunner implements CommandLineRunner {
                 tailOneContainer(args[1]);
                 exit(0);
             }
-            case "shell" -> {
+            case SHELL_COMMAND -> {
                 runInteractiveShell();
                 exit(0);
             }
-            case "help", "--help", "-h" -> {
+            case HELP, HELP_2, H_COMMAND -> {
                 printHelp();
                 exit(0);
             }
@@ -108,11 +111,11 @@ public class CliRunner implements CommandLineRunner {
     private void runInteractiveShell() {
         Scanner scanner = new Scanner(System.in);
 
-        System.out.println("LogGuardian interactive shell");
-        System.out.println("Type 'help' for commands, 'exit' to quit.");
+        System.out.println(WELCOME_LINE_1);
+        System.out.println(WELCOME_LINE_2);
 
         while (true) {
-            System.out.print("logguardian> ");
+            System.out.print(BEGIN_LINE);
 
             if (!scanner.hasNextLine()) {
                 break;
@@ -124,11 +127,11 @@ public class CliRunner implements CommandLineRunner {
                 continue;
             }
 
-            if ("exit".equalsIgnoreCase(line) || "quit".equalsIgnoreCase(line)) {
+            if (EXIT.equalsIgnoreCase(line) || QUIT.equalsIgnoreCase(line)) {
                 break;
             }
 
-            if ("help".equalsIgnoreCase(line)) {
+            if (HELP.equalsIgnoreCase(line)) {
                 printHelp();
                 continue;
             }
@@ -137,11 +140,11 @@ public class CliRunner implements CommandLineRunner {
             String command = parts[0].toLowerCase();
 
             switch (command) {
-                case "list" -> listContainers();
+                case LIST -> listContainers();
 
-                case "tail-all" -> tailAllContainers();
+                case TAIL_ALL -> tailAllContainers();
 
-                case "tail-one" -> {
+                case TAIL_ONE -> {
                     if (parts.length < 2) {
                         System.err.println("Usage: tail-one <containerId>");
                         continue;
@@ -186,22 +189,20 @@ public class CliRunner implements CommandLineRunner {
 
     private String extractName(Container container) {
         if (container.getNames() == null || container.getNames().length == 0) {
-            return "unknown";
+            return UNKNOWN;
         }
 
         return Arrays.stream(container.getNames())
                 .findFirst()
-                .orElse("unknown");
+                .orElse(UNKNOWN);
     }
 
     private String safe(String value) {
-        return value == null || value.isBlank() ? "unknown" : value;
+        return StringUtils.isEmpty(value) ? UNKNOWN : value;
     }
 
     private void exit(int code) {
         System.exit(code);
     }
 
-    private record ContainerRow(String shortId, String name, String status) {
-    }
 }

@@ -113,6 +113,7 @@ public class DockerContainerService {
                                 )
                 )
                 .doOnNext(summary -> log.warn("AI INCIDENT SUMMARY: {}", summary))
+                .doOnNext(incidentSummary -> log.info("logging {}", incidentSummary))
                 .doOnError(e -> log.error("Stream failed for container {}", containerId, e))
                 .doFinally(sig -> activeContainers.remove(containerId))
                 .subscribe();
