@@ -1,21 +1,23 @@
 package com.logguardian.runners;
 
 import com.github.dockerjava.api.model.Container;
-import com.logguardian.rest.model.ContainerRulesetRequest;
-import com.logguardian.rest.model.RuleEnum;
 import com.logguardian.service.docker.DockerContainerService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import reactor.core.Disposable;
 
 import java.util.Arrays;
 import java.util.List;
 import java.util.Scanner;
+import java.util.concurrent.CountDownLatch;
 
 import static com.logguardian.runners.Command.*;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "logguardian.mode", havingValue = "cli")
@@ -90,22 +92,46 @@ public class CliRunner implements CommandLineRunner {
     }
 
     private void tailAllContainers() {
-        ContainerRulesetRequest request = new ContainerRulesetRequest();
-        request.setRule(RuleEnum.ALL);
 
-        dockerContainerService.startTailing(request);
-        System.out.println("Started tailing all running containers.");
+        List<Container> containers = dockerContainerService.getRunningContainerList();
+        if (containers.isEmpty()) {
+            System.out.println("No running containers found.");
+            return;
+        }
+        for(Container container : containers) {
+            try {
+                System.out.printf("Current container id: %s%n", container.getId());
+                System.out.println("Started tailing all running containers.");
+                var currentContainer = dockerContainerService.startStream(container.getId());
+                blockUntilInterrupted(List.of(currentContainer));
+            } catch (InterruptedException e) {
+                log.warn("Interrupted while waiting for containers to start", e);
+                Thread.currentThread().interrupt();
+            }
+        }
+
     }
 
     private void tailOneContainer(String containerId) {
-        ContainerRulesetRequest request = new ContainerRulesetRequest();
-        request.setRule(RuleEnum.EQUAL);
+        try {
+            System.out.printf("Started tailing container %s%n", containerId);
+            var containerStream = dockerContainerService.startStream(containerId);
+            blockUntilInterrupted(List.of(containerStream));
+        }  catch (InterruptedException e) {
+            log.error("Interrupted while waiting for containers to start!", e);
+            Thread.currentThread().interrupt();
+        }
+    }
 
-        // adjust this line if your DTO uses a different field name
-        request.setContainerId(containerId);
+    private void blockUntilInterrupted(List<Disposable> subscriptions) throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
 
-        dockerContainerService.startTailing(request);
-        System.out.printf("Started tailing container %s%n", containerId);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            subscriptions.forEach(Disposable::dispose);
+            latch.countDown();
+        }));
+
+        latch.await();
     }
 
     private void runInteractiveShell() {

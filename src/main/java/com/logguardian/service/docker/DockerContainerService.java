@@ -16,8 +16,6 @@ import com.logguardian.aggregator.MultilineAggregator;
 import com.logguardian.parser.json.JsonParser;
 import com.logguardian.parser.model.LogEvent;
 import com.logguardian.parser.string.StringParser;
-import com.logguardian.rest.model.ContainerRulesetRequest;
-import com.logguardian.rest.model.RuleEnum;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -57,63 +55,31 @@ public class DockerContainerService {
         }
     }
 
-    public void startTailing(ContainerRulesetRequest request) {
-        for (Container container : getRunningContainerList()) {
-            if (checkRuleContainsOrEqual(request.getRule(), container.getId(), request.getContainerId())) {
-                activeContainers.computeIfAbsent(container.getId(), this::startStream);
-            }
-        }
-        if (request.getRule().equals(RuleEnum.ALL)) {
-            tailAllActiveContainers();
-        }
-    }
 
-    public void stopTrailing(ContainerRulesetRequest request) {
-        var disposable = activeContainers.remove(request.getContainerId());
-        if (disposable != null) {
-            disposable.dispose();
-        }
-        if (request.getRule().equals(RuleEnum.ALL)) {
-            stopAllTrailing();
-        }
-    }
-
-    private void stopAllTrailing() {
-        for (Container container : getRunningContainerList()) {
-            var disposable = activeContainers.remove(container.getId());
-            if (disposable != null) {
-                disposable.dispose();
-            }
-        }
-    }
-
-    private boolean checkRuleContainsOrEqual(RuleEnum rule, String containerId, String id) {
-        return switch (rule) {
-            case CONTAINS -> containerId.contains(id);
-            case EQUAL -> containerId.equals(id);
-            case ALL -> false;
-        };
-    }
-
-    private Disposable startStream(String containerId) {
+    public Disposable startStream(String containerId) {
         return streamLogs(containerId)
                 .transform(aggregator::transform)
+                .doOnNext(entry -> System.out.println("[ENTRY] " + entry.message()))
                 .flatMap(entry ->
                         Mono.fromCallable(() -> chooseParser(entry))
+                                .doOnNext(event -> System.out.println("[PARSED] level=" + event.level() + " message=" + event.message()))
                                 .map(fingerPrintGenerator::generateFingerprint)
+                                .doOnNext(event -> System.out.println("[FINGERPRINT] " + event.fingerprint()))
                                 .map(event -> {
                                     int count = counter.countFingerprint(event);
                                     return new CountedLogEvent(event, count);
                                 })
+                                .doOnNext(counted -> System.out.println("[COUNT] fingerprint=" +
+                                        counted.event().fingerprint() + " count=" + counted.count()))
                                 .flatMap(counted -> Mono.justOrEmpty(detector.detectAnomaly(counted)))
+                                .doOnNext(anomaly -> System.out.println("[ANOMALY] " + anomaly))
                                 .map(AiSummerizerMapper::toIncidentSummaryRequest)
                                 .flatMap(req ->
                                         Mono.fromCallable(() -> summarizer.summarize(req))
                                                 .subscribeOn(Schedulers.boundedElastic())
                                 )
                 )
-                .doOnNext(summary -> log.warn("AI INCIDENT SUMMARY: {}", summary))
-                .doOnNext(incidentSummary -> log.info("logging {}", incidentSummary))
+                .doOnNext(summary -> System.out.println("[AI INCIDENT SUMMARY] " + summary))
                 .doOnError(e -> log.error("Stream failed for container {}", containerId, e))
                 .doFinally(sig -> activeContainers.remove(containerId))
                 .subscribe();
