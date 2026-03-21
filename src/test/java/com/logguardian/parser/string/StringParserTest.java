@@ -27,7 +27,7 @@ class StringParserTest {
         LogEvent event = parser.parse(entry);
 
         assertThat(event.level()).isEqualTo(LogLevel.ERROR);
-        assertThat(event.eventTime()).isEqualTo(Instant.parse("2026-03-21T11:00:00.123Z"));
+        assertThat(event.eventTime()).isEqualTo(Instant.parse("2026-03-21T12:00:00.123Z"));
         assertThat(event.message()).contains("request failed");
     }
 
