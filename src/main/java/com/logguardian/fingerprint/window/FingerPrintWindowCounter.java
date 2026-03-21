@@ -1,10 +1,10 @@
 package com.logguardian.fingerprint.window;
 
 import com.logguardian.parser.model.LogEvent;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -12,6 +12,11 @@ import java.util.concurrent.ConcurrentHashMap;
 public class FingerPrintWindowCounter {
 
     private final Map<String, Map<Instant, Integer>> eventsInWindowTime = new ConcurrentHashMap<>();
+    private final int windowSeconds;
+
+    public FingerPrintWindowCounter(@Value("${logguardian.detection.window-seconds:60}") int windowSeconds) {
+        this.windowSeconds = windowSeconds;
+    }
 
     public int countFingerprint(LogEvent event) {
 
@@ -28,7 +33,8 @@ public class FingerPrintWindowCounter {
     }
 
     private Instant calculateWindowStart(Instant timestamp) {
-        return timestamp.truncatedTo(ChronoUnit.MINUTES);
+        long normalizedWindowSeconds = Math.max(1, windowSeconds);
+        long epochSeconds = timestamp.getEpochSecond();
+        return Instant.ofEpochSecond(epochSeconds - Math.floorMod(epochSeconds, normalizedWindowSeconds));
     }
 }
-

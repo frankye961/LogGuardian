@@ -1,6 +1,9 @@
 package com.logguardian.runners;
 
-public class Command {
+public final class Command {
+    private Command() {
+    }
+
     public static final String BEGIN_LINE = "logguardian> ";
     public static final String WELCOME_LINE_1 = "LogGuardian interactive shell";
     public static final String WELCOME_LINE_2 = "Type 'help' for commands, 'exit' to quit.";

@@ -1,8 +1,16 @@
 package com.logguardian.util;
 
-public class Utils {
+public final class Utils {
 
-    public static boolean checkIfJson(String message){
-        return message.startsWith("{") && message.endsWith("}");
+    private Utils() {
+    }
+
+    public static boolean checkIfJson(String message) {
+        if (message == null) {
+            return false;
+        }
+
+        String trimmed = message.trim();
+        return trimmed.startsWith("{") && trimmed.endsWith("}");
     }
 }

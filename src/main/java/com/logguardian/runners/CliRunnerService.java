@@ -21,16 +21,19 @@ import static com.logguardian.runners.Command.*;
 @Component
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "logguardian.mode", havingValue = "cli")
-public class CliRunner implements CommandLineRunner {
+public class CliRunnerService implements CommandLineRunner {
 
     private final DockerContainerService dockerContainerService;
 
     @Override
     public void run(String... args) {
+        exit(execute(args));
+    }
+
+    int execute(String... args) {
         if (args.length == 0) {
             printHelp();
-            exit(0);
-            return;
+            return 0;
         }
 
         String command = args[0].trim().toLowerCase();
@@ -38,34 +41,33 @@ public class CliRunner implements CommandLineRunner {
         switch (command) {
             case LIST -> {
                 listContainers();
-                exit(0);
+                return 0;
             }
-            case TAIL_ALL-> {
+            case TAIL_ALL -> {
                 tailAllContainers();
-                exit(0);
+                return 0;
             }
             case TAIL_ONE -> {
                 if (args.length < 2) {
                     System.err.println("Missing container id for tail-one command.");
                     printHelp();
-                    exit(1);
-                    return;
+                    return 1;
                 }
                 tailOneContainer(args[1]);
-                exit(0);
+                return 0;
             }
             case SHELL_COMMAND -> {
                 runInteractiveShell();
-                exit(0);
+                return 0;
             }
             case HELP, HELP_2, H_COMMAND -> {
                 printHelp();
-                exit(0);
+                return 0;
             }
             default -> {
                 System.err.printf("Unknown command: %s%n%n", command);
                 printHelp();
-                exit(1);
+                return 1;
             }
         }
     }
@@ -92,24 +94,26 @@ public class CliRunner implements CommandLineRunner {
     }
 
     private void tailAllContainers() {
-
         List<Container> containers = dockerContainerService.getRunningContainerList();
         if (containers.isEmpty()) {
             System.out.println("No running containers found.");
             return;
         }
-        for(Container container : containers) {
-            try {
-                System.out.printf("Current container id: %s%n", container.getId());
-                System.out.println("Started tailing all running containers.");
-                var currentContainer = dockerContainerService.startStream(container.getId());
-                blockUntilInterrupted(List.of(currentContainer));
-            } catch (InterruptedException e) {
-                log.warn("Interrupted while waiting for containers to start", e);
-                Thread.currentThread().interrupt();
-            }
-        }
 
+        List<Disposable> subscriptions = containers.stream()
+                .map(Container::getId)
+                .peek(containerId -> System.out.printf("Current container id: %s%n", containerId))
+                .map(dockerContainerService::startStream)
+                .toList();
+
+        System.out.printf("Started tailing %d running containers.%n", subscriptions.size());
+
+        try {
+            blockUntilInterrupted(subscriptions);
+        } catch (InterruptedException e) {
+            log.warn("Interrupted while waiting for containers to stream", e);
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void tailOneContainer(String containerId) {
@@ -123,11 +127,12 @@ public class CliRunner implements CommandLineRunner {
         }
     }
 
-    private void blockUntilInterrupted(List<Disposable> subscriptions) throws InterruptedException {
+    protected void blockUntilInterrupted(List<Disposable> subscriptions) throws InterruptedException {
         CountDownLatch latch = new CountDownLatch(1);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             subscriptions.forEach(Disposable::dispose);
+            dockerContainerService.stopAllStreams();
             latch.countDown();
         }));
 
@@ -167,9 +172,7 @@ public class CliRunner implements CommandLineRunner {
 
             switch (command) {
                 case LIST -> listContainers();
-
                 case TAIL_ALL -> tailAllContainers();
-
                 case TAIL_ONE -> {
                     if (parts.length < 2) {
                         System.err.println("Usage: tail-one <containerId>");
@@ -177,11 +180,9 @@ public class CliRunner implements CommandLineRunner {
                     }
                     tailOneContainer(parts[1]);
                 }
-
                 default -> System.err.printf("Unknown command: %s%n", line);
             }
         }
-
         System.out.println("Bye.");
     }
 
@@ -227,7 +228,7 @@ public class CliRunner implements CommandLineRunner {
         return StringUtils.isEmpty(value) ? UNKNOWN : value;
     }
 
-    private void exit(int code) {
+    protected void exit(int code) {
         System.exit(code);
     }
 

@@ -4,100 +4,56 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
-import com.logguardian.ai.AiIncidentSummarizer;
-import com.logguardian.fingerprint.anomaly.AnomalyDetector;
-import com.logguardian.fingerprint.generator.FingerPrintGenerator;
-import com.logguardian.fingerprint.window.CountedLogEvent;
-import com.logguardian.fingerprint.window.FingerPrintWindowCounter;
-import com.logguardian.mapper.AiSummerizerMapper;
-import com.logguardian.model.LogEntry;
 import com.logguardian.model.LogLine;
-import com.logguardian.aggregator.MultilineAggregator;
-import com.logguardian.parser.json.JsonParser;
-import com.logguardian.parser.model.LogEvent;
-import com.logguardian.parser.string.StringParser;
-import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import static com.logguardian.mapper.LogLineMapper.map;
-import static com.logguardian.util.Utils.checkIfJson;
 import static org.apache.hc.core5.io.Closer.closeQuietly;
 
 @Slf4j
 @Service
-@AllArgsConstructor
 public class DockerContainerService {
 
     private final DockerClient client;
-    private final ConcurrentHashMap<String, Disposable> activeContainers = new ConcurrentHashMap<>();
-    private final MultilineAggregator aggregator;
-    private final StringParser stringParser;
-    private final JsonParser jsonParser;
-    private final FingerPrintGenerator fingerPrintGenerator;
-    private final FingerPrintWindowCounter counter;
-    private final AnomalyDetector detector;
-    private final AiIncidentSummarizer summarizer;
+    private final DockerLogPipelineService dockerLogPipelineService;
+    private final ConcurrentMap<String, Disposable> activeContainers = new ConcurrentHashMap<>();
+
+    public DockerContainerService(DockerClient client, DockerLogPipelineService dockerLogPipelineService) {
+        this.client = client;
+        this.dockerLogPipelineService = dockerLogPipelineService;
+    }
 
     public List<Container> getRunningContainerList() {
         try {
             return getRunningContainers();
         } catch (Exception e) {
             log.error("Docker listContainers failed. Problem: ", e);
-            throw new RuntimeException();
+            throw new IllegalStateException("Failed to list running Docker containers", e);
         }
     }
 
 
     public Disposable startStream(String containerId) {
-        return streamLogs(containerId)
-                .transform(aggregator::transform)
-                .doOnNext(entry -> System.out.println("[ENTRY] " + entry.message()))
-                .flatMap(entry ->
-                        Mono.fromCallable(() -> chooseParser(entry))
-                                .doOnNext(event -> System.out.println("[PARSED] level=" + event.level() + " message=" + event.message()))
-                                .map(fingerPrintGenerator::generateFingerprint)
-                                .doOnNext(event -> System.out.println("[FINGERPRINT] " + event.fingerprint()))
-                                .map(event -> {
-                                    int count = counter.countFingerprint(event);
-                                    return new CountedLogEvent(event, count);
-                                })
-                                .doOnNext(counted -> System.out.println("[COUNT] fingerprint=" +
-                                        counted.event().fingerprint() + " count=" + counted.count()))
-                                .flatMap(counted -> Mono.justOrEmpty(detector.detectAnomaly(counted)))
-                                .doOnNext(anomaly -> System.out.println("[ANOMALY] " + anomaly))
-                                .map(AiSummerizerMapper::toIncidentSummaryRequest)
-                                .flatMap(req ->
-                                        Mono.fromCallable(() -> summarizer.summarize(req))
-                                                .subscribeOn(Schedulers.boundedElastic())
-                                )
-                )
-                .doOnNext(summary -> System.out.println("[AI INCIDENT SUMMARY] " + summary))
-                .doOnError(e -> log.error("Stream failed for container {}", containerId, e))
-                .doFinally(sig -> activeContainers.remove(containerId))
+        Disposable currentStream = activeContainers.get(containerId);
+        if (currentStream != null && !currentStream.isDisposed()) {
+            log.info("Stream already active for container {}", containerId);
+            return currentStream;
+        }
+
+        Disposable subscription = dockerLogPipelineService.process(containerId, streamLogs(containerId))
+                .doOnError(error -> log.error("Stream failed for container {}", containerId, error))
+                .doFinally(signal -> activeContainers.remove(containerId))
                 .subscribe();
-    }
 
-
-    private void tailAllActiveContainers() {
-        for (Container container : getRunningContainerList()) {
-            activeContainers.computeIfAbsent(container.getId(), this::startStream);
-        }
-    }
-
-    private LogEvent chooseParser(LogEntry entry) {
-        String msg = entry.message();
-        if (checkIfJson(msg)) {
-            return jsonParser.parse(entry);
-        }
-        return stringParser.parse(entry);
+        activeContainers.put(containerId, subscription);
+        return subscription;
     }
 
     /**
@@ -151,7 +107,12 @@ public class DockerContainerService {
                     .withTailAll().exec(callback);
         } catch (Exception e) {
             log.error("Error in attaching to the container: ", e);
-            throw new RuntimeException();
+            throw new IllegalStateException("Failed to attach to container " + containerId, e);
         }
+    }
+
+    public void stopAllStreams() {
+        activeContainers.values().forEach(Disposable::dispose);
+        activeContainers.clear();
     }
 }
