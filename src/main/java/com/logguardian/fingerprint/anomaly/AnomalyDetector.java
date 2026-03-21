@@ -4,6 +4,7 @@ import com.logguardian.fingerprint.window.CountedLogEvent;
 import com.logguardian.parser.model.LogEvent;
 import com.logguardian.parser.model.LogLevel;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -13,7 +14,11 @@ import java.util.Optional;
 @Component
 public class AnomalyDetector {
 
-    private static final int ERROR_THRESHOLD = 20;
+    private final int minCountThreshold;
+
+    public AnomalyDetector(@Value("${logguardian.detection.min-count-threshold:20}") int minCountThreshold) {
+        this.minCountThreshold = minCountThreshold;
+    }
 
     public Optional<AnomalyEvent> detectAnomaly(CountedLogEvent countedEvent){
         LogEvent logEvent = countedEvent.event();
@@ -23,7 +28,7 @@ public class AnomalyDetector {
             return Optional.empty();
         }
 
-        if (countedEvent.count() <= ERROR_THRESHOLD) {
+        if (countedEvent.count() <= minCountThreshold) {
             return Optional.empty();
         }
         log.info("Anomaly detected {}", countedEvent.event().level());

@@ -4,17 +4,25 @@ import com.logguardian.ai.model.IncidentSeverity;
 import com.logguardian.ai.model.IncidentSummary;
 import com.logguardian.ai.model.IncidentSummaryRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
+
+import java.util.Map;
 
 @Slf4j
 @Service
 public class AiIncidentSummarizer {
 
     private final ChatClient chatClient;
+    private final String promptTemplate;
 
-    public AiIncidentSummarizer(ChatClient.Builder builder) {
+    public AiIncidentSummarizer(
+            ChatClient.Builder builder,
+            @Value("${logguardian.ai.prompt-template}") String promptTemplate
+    ) {
         this.chatClient = builder.build();
+        this.promptTemplate = promptTemplate;
     }
 
     public IncidentSummary summarize(IncidentSummaryRequest request) {
@@ -54,32 +62,14 @@ public class AiIncidentSummarizer {
     }
 
     private String buildPrompt(IncidentSummaryRequest request) {
-        return """
-                You are analyzing an application incident detected from logs.
-
-                Fingerprint: %s
-                Level: %s
-                Occurrences in current minute: %d
-                Source: %s
-
-                Sample logs:
-                %s
-
-                Provide:
-                1. A short title
-                2. A short summary of what likely happened
-                3. The probable root cause
-                4. Suggested investigation steps
-                5. Severity (LOW, MEDIUM, HIGH)
-
-                Format the response as plain text.
-                """.formatted(
-                request.fingerprint(),
-                request.level(),
-                request.count(),
-                request.sourceName(),
-                formatSamples(request)
-        );
+        return applyTemplate(promptTemplate, Map.of(
+                "fingerprint", safe(request.fingerprint()),
+                "level", String.valueOf(request.level()),
+                "count", String.valueOf(request.count()),
+                "sourceId", safe(request.sourceId()),
+                "sourceName", safe(request.sourceName()),
+                "samples", formatSamples(request)
+        ));
     }
 
     private String formatSamples(IncidentSummaryRequest request) {
@@ -93,6 +83,18 @@ public class AiIncidentSummarizer {
             builder.append(index++).append(". ").append(msg).append("\n");
         }
         return builder.toString();
+    }
+
+    private String applyTemplate(String template, Map<String, String> values) {
+        String resolvedTemplate = template;
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            resolvedTemplate = resolvedTemplate.replace("{" + entry.getKey() + "}", entry.getValue());
+        }
+        return resolvedTemplate;
+    }
+
+    private String safe(String value) {
+        return value == null || value.isBlank() ? "unknown" : value;
     }
 
     private IncidentSummary mapToSummary(String response) {

@@ -1,170 +1,200 @@
-# LogGuardian - V1.0.0 ALPHA
+# LogGuardian
 
-LogGuardian is a Spring Boot/WebFlux service that tails Docker container logs in real time, groups multiline stack traces, parses events (JSON or plaintext), computes normalized fingerprints, detects error spikes, and produces AI-assisted incident summaries.
+LogGuardian is a Java 25 log-ingestion and anomaly-detection prototype for container logs. The current runtime path is a CLI Spring Boot application that connects to Docker, streams container output, merges multiline entries such as stack traces, parses JSON and plain-text logs, fingerprints repeated failures, counts them inside configurable windows, and optionally sends anomalies to an LLM for a human-readable incident summary.
 
-## 1. What the system does end-to-end
+The active implementation is Docker-based. Kubernetes, persistence, and web features are not part of the executable path in the current repository state.
 
-At runtime, the pipeline is:
+## Current Scope
 
-1. **Client starts tailing** via `POST /api/tailing/start` with a `ContainerRulesetRequest`.
-2. **Container matching** happens inside `DockerContainerService` using rule semantics:
-   - `CONTAINS`: partial ID match
-   - `EQUAL`: exact ID match
-   - `ALL`: tail every running container
-3. **Docker streaming** attaches to each selected container using Docker Java `logContainerCmd(...).withFollowStream(true).withTailAll()`.
-4. **Raw frame mapping** converts Docker frames into internal `LogLine` records.
-5. **Multiline aggregation** combines stacktrace-like continuation lines into a single `LogEntry`.
-6. **Parsing** routes each entry:
-   - JSON payloads -> `JsonParser`
-   - Plain text -> `StringParser`
-7. **Fingerprint generation** normalizes message content and hashes it, creating a stable signature for repeated incidents.
-8. **Window counting** tracks per-fingerprint frequency in minute buckets.
-9. **Anomaly detection** currently flags events when:
-   - level is `ERROR`, and
-   - count in the active minute window is above threshold.
-10. **AI summarization** sends anomaly context (fingerprint, count, samples) to a chat model and logs a human-readable incident summary.
-11. **Lifecycle management** keeps one active subscription per tailed container and disposes it when stopping.
+What works now:
 
-## 2. Runtime components and responsibilities
+- Docker-backed log streaming through `docker-java`
+- CLI commands for listing running containers and tailing one or all containers
+- Multiline aggregation for stack traces and continuation lines
+- JSON and plain-text parsing
+- Fingerprint generation for repeated log patterns
+- Count-based anomaly detection on `ERROR` events
+- Optional AI summarization through Spring AI and OpenAI
+- Unit tests for the CLI runner, aggregator, parser, counter, anomaly detector, and utility behavior
 
-### REST API layer
-`DockerController` exposes operations:
+What is present but not finished:
 
-- `GET /api/running/containers` → returns currently running Docker containers.
-- `POST /api/tailing/start` → starts one or more reactive tail streams.
-- `POST /api/tailing/stop` → stops a specific stream or all streams.
+- [`KubernetesPodsService.java`](src/main/java/com/logguardian/service/kubernetes/KubernetesPodsService.java) is currently empty
+- Some dependencies still suggest future extensions, but the current executable path is CLI + Docker only
 
-### Stream orchestration
-`DockerContainerService` is the central coordinator:
+## Architecture
 
-- stores active stream subscriptions in `ConcurrentHashMap<String, Disposable>` (`containerId -> stream subscription`)
-- builds and runs the reactive processing graph
-- encapsulates Docker client interactions
+The runtime flow is linear:
 
-### Parsing and normalization
-- `MultilineAggregator` groups contiguous lines into one logical event.
-- `StringParser` extracts timestamp and severity hints from unstructured logs.
-- `JsonParser` parses structured logs.
-- `FingerPrintGenerator` normalizes and hashes message text.
+1. CLI command dispatch
+2. Container discovery and stream attachment
+3. Raw line ingestion
+4. Multiline event assembly
+5. Parser selection
+6. Fingerprint normalization and hashing
+7. Windowed counting
+8. Threshold-based anomaly detection
+9. Optional AI summary generation
 
-### Detection and AI
-- `FingerPrintWindowCounter` counts occurrences per minute window.
-- `AnomalyDetector` decides if a counted event is anomalous.
-- `AiIncidentSummarizer` transforms anomalies into natural-language incident insights.
+### CLI Layer
 
-## 3. Detailed processing sequence (reactive stream internals)
+[`CliRunnerService.java`](src/main/java/com/logguardian/runners/CliRunnerService.java) is the entry point when `logguardian.mode=cli`.
 
-For each selected container, `DockerContainerService.startStream(containerId)` wires this flow:
+Supported commands:
 
-```text
-streamLogs(containerId)
-  -> multilineAggregator.transform(...)
-  -> chooseParser(entry)
-  -> fingerprintGenerator.generateFingerprint(event)
-  -> counter.countFingerprint(event)
-  -> detector.detectAnomaly(countedEvent)
-  -> AiSummerizerMapper.toIncidentSummaryRequest(...)
-  -> summarizer.summarize(request) [boundedElastic]
-  -> log.warn("AI INCIDENT SUMMARY: ...")
-```
+- `list`
+- `tail-all`
+- `tail-one <containerId>`
+- `shell`
+- `help`
 
-Important behavior details:
+The runner now separates command execution from process termination:
 
-- **Backpressure/concurrency**: AI calls are wrapped in `Mono.fromCallable(...).subscribeOn(Schedulers.boundedElastic())` to avoid blocking reactive worker threads.
-- **Termination cleanup**: `doFinally(...)` removes container IDs from `activeContainers`.
-- **Failure visibility**: per-container stream failures are logged through `doOnError(...)`.
+- `execute(...)` returns an exit code, which makes the behavior testable
+- `tail-all` starts all subscriptions before blocking
+- shutdown handling disposes active subscriptions explicitly
 
-## 4. API contract
+### Docker Access
 
-### `GET /api/running/containers`
-Returns Docker `Container` metadata list.
+[`DockerConnectionConfiguration.java`](src/main/java/com/logguardian/configuration/DockerConnectionConfiguration.java) builds the Docker client from `docker.host`.
 
-- Success: `200 OK`
-- Failure: `400 Bad Request`
+[`DockerContainerService.java`](src/main/java/com/logguardian/service/docker/DockerContainerService.java) is responsible for:
 
-### `POST /api/tailing/start`
-Request body (`ContainerRulesetRequest`):
+- listing running containers
+- attaching to container log streams
+- tracking active subscriptions
+- preventing duplicate streams for the same container
+- stopping all streams on shutdown
 
-```json
-{
-  "containerId": "abc123",
-  "label": ["optional", "labels"],
-  "rule": "CONTAINS"
-}
-```
+### Processing Pipeline
 
-Rules:
-- `CONTAINS` matches partial IDs.
-- `EQUAL` matches one exact ID.
-- `ALL` starts streams for all running containers.
+[`DockerLogPipelineService.java`](src/main/java/com/logguardian/service/docker/DockerLogPipelineService.java) owns the log-processing path.
 
-Response:
-- Success: `200 OK`
-- Failure: `400 Bad Request` with error message
+For each incoming `LogLine`:
 
-### `POST /api/tailing/stop`
-Uses the same request model.
+- lines are merged into logical entries by [`MultilineAggregator.java`](src/main/java/com/logguardian/aggregator/MultilineAggregator.java)
+- parser selection happens through `Utils.checkIfJson(...)`
+- JSON events go through [`JsonParser.java`](src/main/java/com/logguardian/parser/json/JsonParser.java)
+- non-JSON events go through [`StringParser.java`](src/main/java/com/logguardian/parser/string/StringParser.java)
+- failed JSON parsing falls back to the string parser
+- fingerprints are generated from normalized messages
+- counts are tracked inside a configured time bucket
+- anomalies are emitted only for `ERROR` events above the configured threshold
+- if AI is enabled, the summarizer builds a prompt from configuration and calls the model
 
-- For specific stop, `containerId` is removed from active map and disposed.
-- For `ALL`, every active container stream is disposed.
+## Data Model
 
-Response:
-- Success: `200 OK`
-- Failure: `400 Bad Request`
+Important records in the pipeline:
 
-## 5. Configuration
+- [`LogLine.java`](src/main/java/com/logguardian/model/LogLine.java): one raw line from Docker
+- [`LogEntry.java`](src/main/java/com/logguardian/model/LogEntry.java): one logical log event after multiline assembly
+- [`LogEvent.java`](src/main/java/com/logguardian/parser/model/LogEvent.java): parsed event with timestamps, level, message, and fingerprint
+- [`CountedLogEvent.java`](src/main/java/com/logguardian/fingerprint/window/CountedLogEvent.java): parsed event plus count in its current window
+- [`IncidentSummaryRequest.java`](src/main/java/com/logguardian/ai/model/IncidentSummaryRequest.java): prompt input for the summarizer
+- [`IncidentSummary.java`](src/main/java/com/logguardian/ai/model/IncidentSummary.java): summarizer output payload
 
-Main runtime settings are in `src/main/resources/application.yml`:
+## Configuration
 
-- `server.port`: HTTP port (default `8087`)
-- `docker.host`: Docker daemon endpoint (`DOCKER_HOST`)
-- `spring.ai.openai.api-key`: model API key (`OPENAPI_KEY`)
-- Mongo/observability sections are present for broader platform support
+The project now keeps active configuration directly in [`application.yml`](src/main/resources/application.yml). Unused placeholder properties were removed.
 
-## 6. Local development workflow
+### Active Configuration
 
-### Prerequisites
-- Java 25
-- Maven 3.9+
-- reachable Docker daemon (`DOCKER_HOST`)
-- OpenAI API key (if AI summarization is enabled)
+`spring.main.web-application-type`
 
-### Build and run
+- Set to `none`, so the application runs as a CLI process.
 
-```bash
-mvn clean test
-mvn spring-boot:run
-```
+`spring.ai.openai.api-key`
 
-### Typical manual verification
+- OpenAI API key used by Spring AI.
 
-1. Start service.
-2. Call `GET /api/running/containers`.
-3. Start tailing one container via `POST /api/tailing/start`.
-4. Trigger synthetic errors in the target container.
-5. Observe logs for anomaly and AI summary output.
-6. Stop tailing via `POST /api/tailing/stop`.
+`spring.ai.openai.chat.options.model`
 
-## 7. Test strategy in this repository
+- Chat model used by the summarizer.
 
-The project now includes:
+`logguardian.mode`
 
-- **Service-level unit tests** for container selection and stream start behavior.
-- **Controller integration tests** that validate REST endpoints through `WebTestClient` against the real controller (mocked service dependency).
+- Runtime mode selector. `cli` is the implemented mode.
 
-Run all tests:
+`logguardian.ingest.multiline.idle-flush-ms`
+
+- Maximum idle time before a partial multiline event is flushed.
+
+`logguardian.ingest.multiline.max-lines`
+
+- Maximum number of physical lines allowed inside one logical entry before a forced flush.
+
+`logguardian.detection.window-seconds`
+
+- Bucket size for fingerprint counting.
+
+`logguardian.detection.min-count-threshold`
+
+- Minimum count required before an `ERROR` fingerprint becomes an anomaly.
+
+`logguardian.ai.enabled`
+
+- Enables or disables the summarization step.
+
+`logguardian.ai.prompt-template`
+
+- Prompt template used by [`AiIncidentSummarizer.java`](src/main/java/com/logguardian/ai/AiIncidentSummarizer.java).
+- Supported placeholders:
+  `{fingerprint}`, `{level}`, `{count}`, `{sourceId}`, `{sourceName}`, `{samples}`
+
+`docker.host`
+
+- Docker daemon endpoint.
+
+## Running
+
+Build and test:
 
 ```bash
 mvn test
+mvn package
 ```
 
-## 8. Current limitations and implementation notes
+List containers:
 
-- Some configuration blocks in `application.yml` describe broader Kubernetes-oriented goals; current concrete code path is Docker-focused.
-- AI summaries are currently logged, not persisted.
-- The anomaly rule is intentionally simple (`ERROR` + count threshold) and can be extended with baseline/novelty models.
-- `ContainerRulesetRequest.label` exists in the model but is not currently used in selection logic.
+```bash
+java -jar target/logguardian-0.1.0-SNAPSHOT.jar list
+```
 
----
+Tail one container:
 
-If you want, the next iteration can include a strict OpenAPI contract section with concrete request/response schemas and example curl commands for each endpoint.
+```bash
+java -jar target/logguardian-0.1.0-SNAPSHOT.jar tail-one <containerId>
+```
+
+Tail all running containers:
+
+```bash
+java -jar target/logguardian-0.1.0-SNAPSHOT.jar tail-all
+```
+
+Interactive shell:
+
+```bash
+java -jar target/logguardian-0.1.0-SNAPSHOT.jar shell
+```
+
+## Tests
+
+The test suite covers the most failure-prone behaviors:
+
+- [`CliRunnerServiceTest.java`](src/test/java/com/logguardian/runners/CliRunnerServiceTest.java)
+- [`MultilineAggregatorTest.java`](src/test/java/com/logguardian/aggregator/MultilineAggregatorTest.java)
+- [`StringParserTest.java`](src/test/java/com/logguardian/parser/string/StringParserTest.java)
+- [`FingerPrintWindowCounterTest.java`](src/test/java/com/logguardian/fingerprint/window/FingerPrintWindowCounterTest.java)
+- [`AnomalyDetectorTest.java`](src/test/java/com/logguardian/fingerprint/anomaly/AnomalyDetectorTest.java)
+- [`UtilsTest.java`](src/test/java/com/logguardian/util/UtilsTest.java)
+
+## Edge Cases
+
+- JSON detection is heuristic. Only trimmed `{...}` payloads are treated as JSON.
+- Naive timestamps in plain-text logs are interpreted in the local JVM timezone.
+- Multiline grouping is heuristic and may merge formats that begin new events with indentation.
+- `max-lines` is a safety valve, so very large stack traces can be split into multiple entries.
+- Counting is bucketed, not sliding, so spikes near bucket boundaries can appear smaller.
+- Only `ERROR` events can currently raise anomalies.
+- AI summarization is best-effort and does not block the rest of the stream if the model call fails.
