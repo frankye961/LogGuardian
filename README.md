@@ -198,3 +198,10 @@ The test suite covers the most failure-prone behaviors:
 - Counting is bucketed, not sliding, so spikes near bucket boundaries can appear smaller.
 - Only `ERROR` events can currently raise anomalies.
 - AI summarization is best-effort and does not block the rest of the stream if the model call fails.
+
+## Next Features
+
+- Implementation support for Kubernetes
+- Further cleanup
+- Speed improvement
+- Vulnerabilites detector
