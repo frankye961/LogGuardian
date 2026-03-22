@@ -15,4 +15,7 @@ public final class NormalizationRules {
 
     public static final Pattern NUMBER_PATTERN =
             Pattern.compile("\\b\\d+\\b");
+
+    public static final Pattern WHITESPACE_PATTERN =
+            Pattern.compile("\\s+");
 }

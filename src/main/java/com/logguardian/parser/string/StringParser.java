@@ -10,7 +10,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -20,12 +19,6 @@ public class StringParser implements BaseParser {
 
     private static final Pattern TIMESTAMP_PATTERN =
             Pattern.compile("\\b(?<ts>\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{3})?(?:Z|[+-]\\d{2}:?\\d{2})?)\\b");
-
-    private static final Pattern ERROR_PATTERN = Pattern.compile("\\bERROR\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern WARN_PATTERN = Pattern.compile("\\bWARN(?:ING)?\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern INFO_PATTERN = Pattern.compile("\\bINFO\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern DEBUG_PATTERN = Pattern.compile("\\bDEBUG\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern TRACE_PATTERN = Pattern.compile("\\bTRACE\\b", Pattern.CASE_INSENSITIVE);
 
     @Override
     public LogEvent parse(LogEntry entry) {
@@ -101,8 +94,23 @@ public class StringParser implements BaseParser {
     }
 
     private boolean hasExplicitOffset(String timestamp) {
-        return timestamp.endsWith("Z")
-                || timestamp.matches(".*[+-]\\d{2}:?\\d{2}$");
+        if (timestamp.endsWith("Z")) {
+            return true;
+        }
+
+        int length = timestamp.length();
+        if (length < 5) {
+            return false;
+        }
+
+        for (int index = Math.max(0, length - 6); index < length; index++) {
+            char current = timestamp.charAt(index);
+            if ((current == '+' || current == '-') && hasOffsetSuffix(timestamp, index + 1)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private LogLevel detectLevel(String line) {
@@ -110,29 +118,67 @@ public class StringParser implements BaseParser {
             return LogLevel.UNKNOWN;
         }
 
-        String upper = line.toUpperCase(Locale.ROOT);
-
-        if (ERROR_PATTERN.matcher(upper).find()) {
+        if (containsTokenIgnoreCase(line, "ERROR")) {
             return LogLevel.ERROR;
         }
-        if (WARN_PATTERN.matcher(upper).find()) {
+        if (containsTokenIgnoreCase(line, "WARN") || containsTokenIgnoreCase(line, "WARNING")) {
             return LogLevel.WARN;
         }
-        if (INFO_PATTERN.matcher(upper).find()) {
+        if (containsTokenIgnoreCase(line, "INFO")) {
             return LogLevel.INFO;
         }
-        if (DEBUG_PATTERN.matcher(upper).find()) {
+        if (containsTokenIgnoreCase(line, "DEBUG")) {
             return LogLevel.DEBUG;
         }
-        if (TRACE_PATTERN.matcher(upper).find()) {
+        if (containsTokenIgnoreCase(line, "TRACE")) {
             return LogLevel.TRACE;
         }
 
-        // heuristic for stacktraces / exceptions
-        if (upper.contains("EXCEPTION") || upper.contains("ERROR")) {
+        if (containsTokenIgnoreCase(line, "EXCEPTION")) {
             return LogLevel.ERROR;
         }
 
         return LogLevel.UNKNOWN;
+    }
+
+    private boolean hasOffsetSuffix(String timestamp, int startIndex) {
+        int remaining = timestamp.length() - startIndex;
+        if (remaining == 4) {
+            return isDigit(timestamp, startIndex)
+                    && isDigit(timestamp, startIndex + 1)
+                    && isDigit(timestamp, startIndex + 2)
+                    && isDigit(timestamp, startIndex + 3);
+        }
+        if (remaining == 5) {
+            return isDigit(timestamp, startIndex)
+                    && isDigit(timestamp, startIndex + 1)
+                    && timestamp.charAt(startIndex + 2) == ':'
+                    && isDigit(timestamp, startIndex + 3)
+                    && isDigit(timestamp, startIndex + 4);
+        }
+        return false;
+    }
+
+    private boolean isDigit(String value, int index) {
+        return index < value.length() && Character.isDigit(value.charAt(index));
+    }
+
+    private boolean containsTokenIgnoreCase(String line, String token) {
+        int maxStart = line.length() - token.length();
+        for (int index = 0; index <= maxStart; index++) {
+            if (line.regionMatches(true, index, token, 0, token.length())
+                    && isTokenBoundary(line, index - 1)
+                    && isTokenBoundary(line, index + token.length())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isTokenBoundary(String line, int index) {
+        if (index < 0 || index >= line.length()) {
+            return true;
+        }
+        return !Character.isLetterOrDigit(line.charAt(index));
     }
 }

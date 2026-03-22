@@ -42,20 +42,14 @@ public class DockerLogPipelineService {
     public Flux<IncidentSummary> process(String containerId, Flux<LogLine> lines) {
         return lines
                 .transform(aggregator::transform)
-                .doOnNext(entry -> System.out.println("[ENTRY] " + entry.message()))
                 .map(this::parseEntry)
-                .doOnNext(event -> System.out.println("[PARSED] level=" + event.level() + " message=" + event.message()))
                 .map(fingerPrintGenerator::generateFingerprint)
-                .doOnNext(event -> System.out.println("[FINGERPRINT] " + event.fingerprint()))
                 .map(this::countFingerprint)
-                .doOnNext(counted -> System.out.println("[COUNT] fingerprint=" +
-                        counted.event().fingerprint() + " count=" + counted.count()))
                 .flatMap(counted -> Mono.justOrEmpty(detector.detectAnomaly(counted)))
-                .doOnNext(anomaly -> System.out.println("[ANOMALY] " + anomaly))
                 .map(AiSummerizerMapper::toIncidentSummaryRequest)
                 .flatMap(this::summarizeIfEnabled)
                 .doOnNext(summary -> System.out.println("[AI INCIDENT SUMMARY] " + summary))
-                .doOnSubscribe(subscription -> log.info("Stream started for container {}", containerId));
+                .doOnSubscribe(_ -> log.info("Stream started for container {}", containerId));
     }
 
     private CountedLogEvent countFingerprint(LogEvent event) {

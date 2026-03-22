@@ -9,6 +9,7 @@ public class NormalizationGenerator {
     private final static String IP_MATCHER = "<ip>";
     private final static String ID_MATCHER = "<id>";
     private final static String PLACE_HOLDER = "?";
+    private final static String SPACE = " ";
 
     public String normalize(String message) {
         if (message == null || message.isBlank()) {
@@ -21,7 +22,7 @@ public class NormalizationGenerator {
         normalized = NormalizationRules.IP_PATTERN.matcher(normalized).replaceAll(IP_MATCHER);
         normalized = NormalizationRules.HEX_PATTERN.matcher(normalized).replaceAll(ID_MATCHER);
         normalized = NormalizationRules.NUMBER_PATTERN.matcher(normalized).replaceAll(PLACE_HOLDER);
-        normalized = normalized.replaceAll("\\s+", " ").trim();
+        normalized = NormalizationRules.WHITESPACE_PATTERN.matcher(normalized).replaceAll(SPACE).trim();
 
         return normalized;
     }
