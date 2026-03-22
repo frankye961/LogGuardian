@@ -11,6 +11,7 @@ concurrency:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -28,13 +29,21 @@ jobs:
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4
+        env:
+          PACKAGE_USERNAME: ${{ github.actor }}
+          PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
         with:
           distribution: temurin
           java-version: "25"
           cache: maven
+          server-id: github
+          server-username: PACKAGE_USERNAME
+          server-password: PACKAGE_TOKEN
 
-      - name: Build Maven packages
-        run: mvn -B -DskipTests package
+      - name: Publish Maven packages
+        run: mvn -B -DskipTests deploy
+        env:
+          PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
 
       - name: Compute release metadata
         shell: bash
@@ -64,5 +73,5 @@ jobs:
           name: LogGuardian ${{ env.VERSION }}
           target_commitish: ${{ github.event.workflow_run.head_sha }}
           generate_release_notes: true
-          prerelease: ${{ contains(env.VERSION, 'SNAPSHOT') }}
+          prerelease: false
           files: release-assets/*
