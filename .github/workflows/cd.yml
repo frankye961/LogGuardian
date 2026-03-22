@@ -40,25 +40,39 @@ jobs:
           server-username: PACKAGE_USERNAME
           server-password: PACKAGE_TOKEN
 
+      - name: Compute project version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          if [[ "$VERSION" == *-SNAPSHOT ]]; then
+            echo "IS_SNAPSHOT=true" >> "$GITHUB_ENV"
+          else
+            echo "IS_SNAPSHOT=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Publish Maven packages
+        if: env.IS_SNAPSHOT != 'true'
         run: mvn -B -DskipTests deploy
         env:
           PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
 
       - name: Compute release metadata
+        if: env.IS_SNAPSHOT != 'true'
         shell: bash
         env:
           RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
           SHORT_SHA="${RELEASE_SHA::7}"
           TAG="v${VERSION}-${SHORT_SHA}"
 
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Collect release assets
+        if: env.IS_SNAPSHOT != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -67,6 +81,7 @@ jobs:
           ls -la release-assets
 
       - name: Create GitHub release
+        if: env.IS_SNAPSHOT != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
@@ -75,3 +90,20 @@ jobs:
           generate_release_notes: true
           prerelease: false
           files: release-assets/*
+
+      - name: Bump pom.xml to next snapshot version
+        if: env.IS_SNAPSHOT != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${VERSION}"
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-SNAPSHOT"
+
+          mvn -B versions:set -DnewVersion="${NEXT_VERSION}" -DgenerateBackupPoms=false
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pom.xml
+          git commit -m "chore: bump version to ${NEXT_VERSION} [skip ci]"
+          git push origin HEAD:main

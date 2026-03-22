@@ -11,12 +11,20 @@ import java.util.HexFormat;
 public class HashingGenerator {
 
     private static final String HASHING_ALGORITHM = "SHA-256";
+    private static final HexFormat HEX = HexFormat.of();
+    private static final ThreadLocal<MessageDigest> DIGEST =
+            ThreadLocal.withInitial(HashingGenerator::createDigest);
 
     public String hash(String input) {
+        MessageDigest digest = DIGEST.get();
+        digest.reset();
+        byte[] hashBytes = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+        return HEX.formatHex(hashBytes);
+    }
+
+    private static MessageDigest createDigest() {
         try {
-            MessageDigest digest = MessageDigest.getInstance(HASHING_ALGORITHM);
-            byte[] hashBytes = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hashBytes);
+            return MessageDigest.getInstance(HASHING_ALGORITHM);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("Could not generate fingerprint hash", e);
         }

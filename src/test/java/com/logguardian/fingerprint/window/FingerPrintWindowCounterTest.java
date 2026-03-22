@@ -54,4 +54,30 @@ class FingerPrintWindowCounterTest {
         assertThat(counter.countFingerprint(sameWindow)).isEqualTo(2);
         assertThat(counter.countFingerprint(nextWindow)).isEqualTo(1);
     }
+
+    @Test
+    void evictsExpiredWindowsPerFingerprint() {
+        FingerPrintWindowCounter counter = new FingerPrintWindowCounter(60);
+
+        assertThat(counter.countFingerprint(eventAt("2026-03-21T12:00:00Z"))).isEqualTo(1);
+        assertThat(counter.countFingerprint(eventAt("2026-03-21T12:01:00Z"))).isEqualTo(1);
+        assertThat(counter.countFingerprint(eventAt("2026-03-21T12:02:00Z"))).isEqualTo(1);
+        assertThat(counter.countFingerprint(eventAt("2026-03-21T12:03:00Z"))).isEqualTo(1);
+
+        assertThat(counter.countFingerprint(eventAt("2026-03-21T12:00:00Z"))).isEqualTo(1);
+    }
+
+    private LogEvent eventAt(String eventTime) {
+        return new LogEvent(
+                "DOCKER",
+                "container-1",
+                null,
+                Instant.parse(eventTime),
+                Instant.parse(eventTime),
+                LogLevel.ERROR,
+                "failure",
+                "fp-1",
+                Map.of()
+        );
+    }
 }

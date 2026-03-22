@@ -36,14 +36,12 @@ public class MultilineAggregator {
                     line -> {
                         synchronized (monitor) {
                             if (!currentEntry.isEmpty() && isNewEntryStart(line.line())) {
-                                sink.next(toEntry(currentEntry));
-                                currentEntry.clear();
+                                flushCurrentEntry(sink, currentEntry);
                             }
 
                             currentEntry.add(line);
                             if (currentEntry.size() >= maxLines) {
-                                sink.next(toEntry(currentEntry));
-                                currentEntry.clear();
+                                flushCurrentEntry(sink, currentEntry);
                             }
 
                             rescheduleIdleFlush(sink, currentEntry, idleFlushTask, monitor);
@@ -56,9 +54,7 @@ public class MultilineAggregator {
                     () -> {
                         cancelIdleFlush(idleFlushTask);
                         synchronized (monitor) {
-                            if (!currentEntry.isEmpty()) {
-                                sink.next(toEntry(currentEntry));
-                            }
+                            flushCurrentEntry(sink, currentEntry);
                         }
                         sink.complete();
                     }
@@ -86,12 +82,15 @@ public class MultilineAggregator {
 
     private LogEntry toEntry(List<LogLine> lines) {
         LogLine first = lines.getFirst();
-        String joined = lines.stream()
-                .map(LogLine::line)
-                .reduce((left, right) -> left + "\n" + right)
-                .orElse("");
+        StringBuilder joined = new StringBuilder(estimateMessageSize(lines));
+        for (int index = 0; index < lines.size(); index++) {
+            if (index > 0) {
+                joined.append('\n');
+            }
+            joined.append(lines.get(index).line());
+        }
 
-        return new LogEntry(first.containerId(), first.receivedAt(), joined);
+        return new LogEntry(first.containerId(), first.receivedAt(), joined.toString());
     }
 
     private void rescheduleIdleFlush(reactor.core.publisher.FluxSink<LogEntry> sink,
@@ -104,8 +103,7 @@ public class MultilineAggregator {
                 if (currentEntry.isEmpty()) {
                     return;
                 }
-                sink.next(toEntry(currentEntry));
-                currentEntry.clear();
+                flushCurrentEntry(sink, currentEntry);
             }
         }, idleFlushMs, java.util.concurrent.TimeUnit.MILLISECONDS));
     }
@@ -115,6 +113,22 @@ public class MultilineAggregator {
         if (scheduledTask != null) {
             scheduledTask.dispose();
         }
+    }
+
+    private void flushCurrentEntry(reactor.core.publisher.FluxSink<LogEntry> sink, List<LogLine> currentEntry) {
+        if (currentEntry.isEmpty()) {
+            return;
+        }
+        sink.next(toEntry(currentEntry));
+        currentEntry.clear();
+    }
+
+    private int estimateMessageSize(List<LogLine> lines) {
+        int estimatedSize = Math.max(16, lines.size() - 1);
+        for (LogLine line : lines) {
+            estimatedSize += line.line() == null ? 4 : line.line().length();
+        }
+        return estimatedSize;
     }
 
 }
