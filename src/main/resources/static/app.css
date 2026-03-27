@@ -278,12 +278,26 @@ h1 {
 .badge {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 0.35rem;
-    padding: 0.35rem 0.65rem;
+    min-height: 2rem;
+    max-width: 100%;
+    padding: 0.42rem 0.7rem;
     border-radius: 999px;
     font-size: 0.78rem;
+    line-height: 1.2;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+    text-align: center;
+}
+
+.badge.mono {
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .badge-running,
@@ -302,15 +316,23 @@ h1 {
 
 .badge-low,
 .badge-stopped,
-.badge-resolved {
+.badge-resolved,
+.badge-closed {
     background: rgba(104, 225, 253, 0.14);
     color: #adeefc;
 }
 
 .badge-unknown,
-.badge-error {
+.badge-error,
+.badge-suppressed,
+.badge-regressed {
     background: rgba(255, 111, 145, 0.14);
     color: #ffc6d3;
+}
+
+.badge-acknowledged {
+    background: rgba(255, 180, 84, 0.14);
+    color: #ffd8a1;
 }
 
 .incident-grid {

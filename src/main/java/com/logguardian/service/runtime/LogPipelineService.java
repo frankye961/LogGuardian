@@ -137,12 +137,21 @@ public class LogPipelineService {
 
     //TODO implement method to persist incidentevent document
     private Mono<IncidentSummary> summarizeIfEnabled(IncidentSummaryRequest request) {
-        if (!aiEnabled || !summarizer.isAvailable()) {
+        if (!aiEnabled) {
             return Mono.empty();
         }
 
         return Mono.fromCallable(() -> summarizer.summarize(request))
-                .subscribeOn(Schedulers.boundedElastic());
+                .subscribeOn(Schedulers.boundedElastic())
+                .filter(summary -> !isUnavailableAiSummary(summary));
+    }
+
+    private boolean isUnavailableAiSummary(IncidentSummary summary) {
+        if (summary == null) {
+            return true;
+        }
+        return "AI unavailable".equalsIgnoreCase(summary.title())
+                && "Missing ChatModel bean".equalsIgnoreCase(summary.probableCause());
     }
 
 
