@@ -12,7 +12,8 @@ What works now:
 - Kubernetes-backed pod log streaming through Fabric8
 - CLI commands for listing running sources and tailing one or all sources via `docker` or `kub`
 - Interactive shell mode with background tail jobs
-- Optional browser-based GUI for listing sources, starting/stopping tail jobs, and viewing incidents
+- Optional browser-based GUI for listing sources, starting/stopping tail jobs, viewing incidents, and changing incident event types
+- GUI incident cards show raw container log errors instead of the AI summary
 - Multiline aggregation for stack traces and continuation lines
 - JSON and plain-text parsing
 - Fingerprint generation for repeated log patterns
@@ -73,8 +74,12 @@ The dashboard currently supports:
 - starting `tail-one` and `tail-all` jobs without blocking the UI
 - stopping active tail jobs
 - showing recent incidents from persistence when available
+- selecting incidents and applying manual event-type changes such as `ACKNOWLEDGED`, `RESOLVED`, and `CLOSED`
+- showing incident content from stored container log samples instead of the AI-generated summary
+- collapsing repeated identical samples for the same incident so the same fingerprinted error is shown once
 - live updates through server-sent events
 - chunked source rendering for large runtime lists
+- responsive card layouts that wrap long source IDs, titles, summaries, and notes instead of overflowing
 
 ### Docker Access
 
@@ -115,7 +120,7 @@ For each incoming `LogLine`:
 - counts are tracked inside a configured time bucket
 - anomalies are emitted only for `ERROR` events above the configured threshold
 - if AI is enabled, the summarizer builds a prompt from configuration and calls the model
-- if email notifications are enabled, the anomaly and summary are rendered into a readable incident email and sent through Spring Mail
+- if email notifications are enabled, the anomaly and AI summary are rendered into a readable incident email and sent through Spring Mail
 
 ### Email Notifications
 
@@ -385,6 +390,10 @@ The GUI:
 - loads live updates over `/api/dashboard/stream`
 - starts tail jobs in background
 - renders source lists in batches to avoid large first paints
+- lets operators select incidents and change the incident event type from the dashboard
+- shows log-first incident cards built from stored sample errors
+- collapses duplicate repeated samples for the same incident
+- wraps long text fields so cards remain usable on smaller screens and with long source IDs
 
 For a quick anomaly-email test, lower the threshold temporarily:
 
@@ -417,8 +426,9 @@ The test suite covers the most failure-prone behaviors:
 - Only `ERROR` events can currently raise anomalies.
 - AI summarization is best-effort and does not block the rest of the stream if the model call fails.
 - If AI is not configured, the application still starts and returns an "AI unavailable" style summary fallback.
+- The GUI incident cards are intentionally log-first. AI summaries are preserved for email delivery and persisted metadata, but the dashboard emphasizes the raw container error samples.
 - Email delivery happens only after an anomaly is detected, so normal container tailing alone will not send notifications.
-- The first GUI sync still depends on runtime discovery speed. Docker or Kubernetes API latency can still dominate dashboard load time.
+- The first GUI snapshot now uses cached runtime data immediately and refreshes Docker/Kubernetes source discovery in the background. A completely cold cache can still show an initially sparse dashboard until discovery completes.
 - By default, anomalies require more than `logguardian.detection.min-count-threshold` matching `ERROR` events inside the current window.
 
 ## Next Features

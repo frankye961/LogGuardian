@@ -15,6 +15,7 @@
 
 * {
     box-sizing: border-box;
+    min-width: 0;
 }
 
 body {
@@ -253,11 +254,14 @@ h1 {
 .source-main {
     display: grid;
     gap: 0.25rem;
+    min-width: 0;
 }
 
 .mono {
     font-family: "IBM Plex Mono", monospace;
     font-size: 0.88rem;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .muted {
@@ -318,6 +322,8 @@ h1 {
     margin-top: 0.8rem;
     color: var(--muted);
     line-height: 1.5;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .incident-card-selected {
@@ -352,6 +358,14 @@ h1 {
 .incident-note {
     resize: vertical;
     min-height: 5.5rem;
+}
+
+.runtime-card strong,
+.job-card h3,
+.incident-card h3,
+.source-main strong {
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .empty-state {
@@ -398,5 +412,23 @@ h1 {
 
     .hero-actions {
         align-items: flex-start;
+    }
+
+    .runtime-card-head,
+    .job-card-head,
+    .incident-card-head,
+    .source-row {
+        flex-direction: column;
+    }
+
+    .runtime-actions,
+    .job-actions,
+    .badge-row {
+        width: 100%;
+    }
+
+    .button {
+        width: 100%;
+        justify-content: center;
     }
 }

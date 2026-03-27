@@ -14,6 +14,7 @@ import org.mapstruct.MappingTarget;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 
 @Mapper(
         componentModel = MappingConstants.ComponentModel.SPRING,
@@ -186,7 +187,9 @@ public interface IncidentMapper {
         } else if (!(incident.getSampleMessages() instanceof ArrayList)) {
             incident.setSampleMessages(new ArrayList<>(incident.getSampleMessages()));
         }
-        incident.getSampleMessages().add(sampleMessage);
+        LinkedHashSet<String> deduplicated = new LinkedHashSet<>(incident.getSampleMessages());
+        deduplicated.add(sampleMessage);
+        incident.setSampleMessages(new ArrayList<>(deduplicated));
         incident.setSampleMessage(sampleMessage);
     }
 

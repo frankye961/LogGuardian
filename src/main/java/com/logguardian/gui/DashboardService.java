@@ -19,7 +19,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -49,6 +48,7 @@ public class DashboardService {
     private final ConcurrentMap<Integer, TailJob> jobs = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Integer> sourceOwners = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, CachedSources> sourceCache = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, AtomicBoolean> sourceRefreshInProgress = new ConcurrentHashMap<>();
     private final AtomicBoolean incidentRefreshInProgress = new AtomicBoolean(false);
     private volatile CachedIncidents incidentCache = new CachedIncidents(List.of(), Instant.EPOCH);
 
@@ -112,7 +112,7 @@ public class DashboardService {
 
     public TailJobView startTailAll(String runtimeKey) {
         String runtime = normalizeRuntime(runtimeKey);
-        List<LogSource> sources = safeListSources(runtime);
+        List<LogSource> sources = refreshSourcesNow(runtime);
         if (sources.isEmpty()) {
             throw new IllegalStateException("No running sources found for runtime " + runtime);
         }
@@ -179,6 +179,7 @@ public class DashboardService {
                 .orElseThrow(() -> new IllegalStateException("Incident not found: " + incidentId));
 
         applyIncidentState(incident, type, Instant.now());
+        //TODO In case the incident is CLOSED state, has to be deleted from db and cache
         IncidentDocument savedIncident = incidentPersistence.saveIncident(incident);
         incidentPersistence.saveIncidentEvent(
                 incidentMapper.toIncidentStateEventDocument(savedIncident, type, "gui", StringUtils.trimToNull(note))
@@ -210,15 +211,55 @@ public class DashboardService {
     private IncidentCard toIncidentCard(IncidentDocument document) {
         return new IncidentCard(
                 document.getId(),
-                StringUtils.defaultIfBlank(document.getAiTitle(), "Unlabeled incident"),
+                buildLogFirstTitle(document),
                 StringUtils.defaultIfBlank(document.getSourceName(), document.getSourceId()),
                 document.getSourceId(),
                 document.getSeverity() == null ? "UNKNOWN" : document.getSeverity().name(),
                 document.getStatus() == null ? IncidentStatus.OPEN.name() : document.getStatus().name(),
                 document.getLastSeenAt(),
-                StringUtils.defaultIfBlank(document.getAiSummary(), document.getSampleMessage()),
+                buildLogFirstSummary(document),
                 MANAGEABLE_EVENT_TYPES.stream().map(Enum::name).toList()
         );
+    }
+
+    private String buildLogFirstTitle(IncidentDocument document) {
+        String firstSample = allSampleMessages(document).stream()
+                .findFirst()
+                .orElse(null);
+        if (StringUtils.isNotBlank(firstSample)) {
+            return abbreviate(firstSample, 120);
+        }
+        return StringUtils.defaultIfBlank(document.getSourceName(), "Container incident");
+    }
+
+    private String buildLogFirstSummary(IncidentDocument document) {
+        List<String> samples = allSampleMessages(document);
+        if (!samples.isEmpty()) {
+            return String.join("\n", samples);
+        }
+        return "No sample logs available";
+    }
+
+    private List<String> allSampleMessages(IncidentDocument document) {
+        if (document.getSampleMessages() != null && !document.getSampleMessages().isEmpty()) {
+            return document.getSampleMessages().stream()
+                    .filter(StringUtils::isNotBlank)
+                    .collect(java.util.stream.Collectors.collectingAndThen(
+                            java.util.stream.Collectors.toCollection(LinkedHashSet::new),
+                            List::copyOf
+                    ));
+        }
+        if (StringUtils.isNotBlank(document.getSampleMessage())) {
+            return List.of(document.getSampleMessage());
+        }
+        return List.of();
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength - 3) + "...";
     }
 
     private void refreshIncidentsAsync() {
@@ -296,6 +337,28 @@ public class DashboardService {
             return cachedSources.sources();
         }
 
+        refreshSourcesAsync(runtime);
+        return cachedSources == null ? List.of() : cachedSources.sources();
+    }
+
+    private void refreshSourcesAsync(String runtime) {
+        AtomicBoolean guard = sourceRefreshInProgress.computeIfAbsent(runtime, _runtime -> new AtomicBoolean(false));
+        if (!guard.compareAndSet(false, true)) {
+            return;
+        }
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                refreshSourcesNow(runtime);
+            } finally {
+                guard.set(false);
+            }
+        });
+    }
+
+    private List<LogSource> refreshSourcesNow(String runtime) {
+        Instant now = Instant.now();
+        CachedSources cachedSources = sourceCache.get(runtime);
         try {
             List<LogSource> sources = runtimeService(runtime).listRunningSources();
             sourceCache.put(runtime, new CachedSources(List.copyOf(sources), now));

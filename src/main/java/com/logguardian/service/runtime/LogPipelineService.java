@@ -137,7 +137,7 @@ public class LogPipelineService {
 
     //TODO implement method to persist incidentevent document
     private Mono<IncidentSummary> summarizeIfEnabled(IncidentSummaryRequest request) {
-        if (!aiEnabled) {
+        if (!aiEnabled || !summarizer.isAvailable()) {
             return Mono.empty();
         }
 

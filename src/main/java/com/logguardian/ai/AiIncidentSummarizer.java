@@ -118,4 +118,8 @@ public class AiIncidentSummarizer {
                 IncidentSeverity.UNKNOWN
         );
     }
+
+    public boolean isAvailable() {
+        return chatClient != null;
+    }
 }
