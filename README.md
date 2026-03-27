@@ -433,9 +433,9 @@ The test suite covers the most failure-prone behaviors:
 
 ## Next Features
 
-- Cache implementation
-- Further cleanup
+- Cache adjustment
+- Further cleanup and improvement
 - Speed improvement
-- Database support for long term memory implementation
+- Database performances implementation
 - Vulnerabilities detector
   
