@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   release:
-    name: Package Maven Artifacts And Create Release
+    name: Build, Deploy And Release
     runs-on: self-hosted
     if: >
       github.event.workflow_run.conclusion == 'success' &&
@@ -77,8 +77,46 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
+          mkdir -p release-assets/deploy/linux
           find target -maxdepth 1 -type f \( -name '*.jar' -o -name '*.pom' \) ! -name '*.jar.original' -exec cp {} release-assets/ \;
+          cp deploy/linux/logguardian.service release-assets/deploy/linux/
+          cp deploy/linux/logguardian.env.example release-assets/deploy/linux/
+          cp deploy/linux/start-logguardian.sh release-assets/deploy/linux/
+          chmod +x release-assets/deploy/linux/start-logguardian.sh
           ls -la release-assets
+
+      - name: Install application on deployment machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_DIR="/opt/logguardian"
+          BIN_DIR="$APP_DIR/bin"
+          ETC_DIR="/etc/logguardian"
+          SERVICE_PATH="/etc/systemd/system/logguardian.service"
+          JAR_PATH="$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*.jar.original' | head -n 1)"
+
+          if [[ -z "${JAR_PATH}" ]]; then
+            echo "No built jar found in target/"
+            exit 1
+          fi
+
+          sudo mkdir -p "$APP_DIR" "$BIN_DIR" "$ETC_DIR"
+          sudo install -m 0644 "$JAR_PATH" "$APP_DIR/logguardian.jar"
+          sudo install -m 0755 deploy/linux/start-logguardian.sh "$BIN_DIR/start-logguardian.sh"
+          sudo install -m 0644 deploy/linux/logguardian.service "$SERVICE_PATH"
+
+          if [[ ! -f "$ETC_DIR/logguardian.env" ]]; then
+            sudo install -m 0644 deploy/linux/logguardian.env.example "$ETC_DIR/logguardian.env"
+          fi
+
+      - name: Restart deployed service
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo systemctl daemon-reload
+          sudo systemctl enable logguardian.service
+          sudo systemctl restart logguardian.service
+          sudo systemctl --no-pager --full status logguardian.service
 
       - name: Create GitHub release
         if: env.IS_SNAPSHOT != 'true'
