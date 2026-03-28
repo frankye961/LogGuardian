@@ -395,6 +395,36 @@ The GUI:
 - collapses duplicate repeated samples for the same incident
 - wraps long text fields so cards remain usable on smaller screens and with long source IDs
 
+### Machine Deployment
+
+The CD pipeline now publishes a small Linux deployment bundle alongside the release jar:
+
+- `deploy/linux/logguardian.service`
+- `deploy/linux/logguardian.env.example`
+- `deploy/linux/start-logguardian.sh`
+
+This bundle is intended for a machine-hosted Spring Boot deployment where LogGuardian runs mainly as a GUI service.
+
+Recommended machine defaults:
+
+- `LOGGUARDIAN_MODE=gui`
+- `SPRING_MAIN_WEB_APPLICATION_TYPE=reactive`
+
+Typical installation flow on a Linux machine:
+
+1. Copy the release jar to `/opt/logguardian/logguardian.jar`
+2. Copy `deploy/linux/start-logguardian.sh` to `/opt/logguardian/bin/start-logguardian.sh`
+3. Copy `deploy/linux/logguardian.env.example` to `/etc/logguardian/logguardian.env` and adjust values
+4. Copy `deploy/linux/logguardian.service` to `/etc/systemd/system/logguardian.service`
+5. Run `sudo systemctl daemon-reload`
+6. Run `sudo systemctl enable --now logguardian`
+
+The CLI is still available locally and on deployed machines by overriding the environment, for example:
+
+```bash
+LOGGUARDIAN_MODE=cli SPRING_MAIN_WEB_APPLICATION_TYPE=none java -jar /opt/logguardian/logguardian.jar shell
+```
+
 For a quick anomaly-email test, lower the threshold temporarily:
 
 ```bash
